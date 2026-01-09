@@ -6,6 +6,7 @@ use alloc::sync::Arc;
 use core::convert::TryInto;
 use core::fmt::Display;
 use core::mem;
+use core::sync::atomic::Ordering;
 
 use crate::consts::{MAXPATH, MAXARG, MAXARGLEN, fs::MAX_DIR_SIZE};
 use crate::process::PROC_MANAGER;
@@ -188,6 +189,15 @@ impl Syscall for Proc {
 
         #[cfg(feature = "trace_syscall")]
         println!("[{}].exec({}, {:#x}) = {:?}", self.excl.lock().pid, String::from_utf8_lossy(&path), uargv, result);
+
+        if result.is_ok() {
+            let guard = self.excl.lock();
+            if guard.pid == 1 {
+                let data = self.data.get_mut();
+                data.pagetable.as_ref().unwrap().vm_print(0);
+            }
+            drop(guard);
+        }
 
         if result.is_err() {
             syscall_warning(error);
@@ -500,18 +510,10 @@ impl Syscall for Proc {
         Ok(0)
     }
 
-    /// Set the trace mask for the current process and its future children.
+    /// 
     fn sys_trace(&mut self) -> SysResult {
         let mask = self.arg_i32(0);
-        if mask < 0 {
-            return Err(())
-        }
-
-        self.excl.lock().trace_mask = mask as u32;
-
-        #[cfg(feature = "trace_syscall")]
-        println!("[{}].trace(mask={:#x})", self.excl.lock().pid, mask);
-
+        self.trace_mask.store(mask as u32, Ordering::Relaxed);
         Ok(0)
     }
 }
