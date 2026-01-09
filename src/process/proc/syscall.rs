@@ -39,6 +39,7 @@ pub trait Syscall {
     fn sys_link(&mut self) -> SysResult;
     fn sys_mkdir(&mut self) -> SysResult;
     fn sys_close(&mut self) -> SysResult;
+    fn sys_trace(&mut self) -> SysResult;
 }
 
 impl Syscall for Proc {
@@ -496,6 +497,21 @@ impl Syscall for Proc {
         println!("[{}].close(fd={}), file={:?}", self.excl.lock().pid, fd, file);
 
         drop(file);
+        Ok(0)
+    }
+
+    /// Set the trace mask for the current process and its future children.
+    fn sys_trace(&mut self) -> SysResult {
+        let mask = self.arg_i32(0);
+        if mask < 0 {
+            return Err(())
+        }
+
+        self.excl.lock().trace_mask = mask as u32;
+
+        #[cfg(feature = "trace_syscall")]
+        println!("[{}].trace(mask={:#x})", self.excl.lock().pid, mask);
+
         Ok(0)
     }
 }

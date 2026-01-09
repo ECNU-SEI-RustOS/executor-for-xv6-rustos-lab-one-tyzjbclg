@@ -59,6 +59,8 @@ pub struct ProcExcl {
     pub channel: usize,
     /// 进程的唯一标识符（进程ID）。
     pub pid: usize,
+    /// 系统调用追踪掩码，用于决定是否追踪对应的系统调用。
+    pub trace_mask: u32,
 }
 
 
@@ -69,6 +71,7 @@ impl ProcExcl {
             exit_status: 0,
             channel: 0,
             pid: 0,
+            trace_mask: 0,
         }
     }
 
@@ -78,6 +81,7 @@ impl ProcExcl {
         self.channel = 0;
         self.exit_status = 0;
         self.state = ProcState::UNUSED;
+        self.trace_mask = 0;
     }
 }
 
@@ -520,6 +524,7 @@ impl Proc {
             19 => self.sys_link(),
             20 => self.sys_mkdir(),
             21 => self.sys_close(),
+            22 => self.sys_trace(),
             _ => {
                 panic!("unknown syscall num: {}", a7);
             }
@@ -528,6 +533,49 @@ impl Proc {
             Ok(ret) => ret,
             Err(()) => -1isize as usize,
         };
+
+        // Check if we need to trace this syscall
+        let excl = self.excl.lock();
+        let trace_mask = excl.trace_mask;
+        let pid = excl.pid;
+        drop(excl);
+
+        if a7 >= 1 && a7 <= 22 {
+            let mask_bit = 1u32 << (a7 - 1);
+            if (trace_mask & mask_bit) != 0 {
+                let name = self.syscall_name(a7);
+                println!("{}: syscall {} -> {}", pid, name, tf.a0);
+            }
+        }
+    }
+
+    /// Get the name of a syscall by its number
+    fn syscall_name(&self, num: usize) -> &'static str {
+        match num {
+            1 => "fork",
+            2 => "exit",
+            3 => "wait",
+            4 => "pipe",
+            5 => "read",
+            6 => "kill",
+            7 => "exec",
+            8 => "fstat",
+            9 => "chdir",
+            10 => "dup",
+            11 => "getpid",
+            12 => "sbrk",
+            13 => "sleep",
+            14 => "uptime",
+            15 => "open",
+            16 => "write",
+            17 => "mknod",
+            18 => "unlink",
+            19 => "link",
+            20 => "mkdir",
+            21 => "close",
+            22 => "trace",
+            _ => "unknown",
+        }
     }
 
     /// # 功能说明
@@ -687,9 +735,12 @@ impl Proc {
         // clone opened files and cwd
         cdata.open_files.clone_from(&pdata.open_files);
         cdata.cwd.clone_from(&pdata.cwd);
-        
+
         // copy process name
         cdata.name.copy_from_slice(&pdata.name);
+
+        // copy trace mask
+        cexcl.trace_mask = self.excl.lock().trace_mask;
 
         let cpid = cexcl.pid;
 
